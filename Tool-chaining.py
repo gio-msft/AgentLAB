@@ -109,8 +109,33 @@ import numpy as np
 import pandas as pd
 from tenacity import retry, stop_after_attempt, wait_fixed, retry_if_exception_type
 from openai import OpenAI, BadRequestError, APIConnectionError
+from openai import AzureOpenAI
 import anthropic
 import json_repair
+
+# ---------------------------------------------------------------------------
+# Azure OpenAI + Entra ID configuration
+# Set AZURE_OPENAI_ENDPOINT to enable; falls back to standard OpenAI if unset.
+# ---------------------------------------------------------------------------
+AZURE_OPENAI_ENDPOINT = os.environ.get(
+    "AZURE_OPENAI_ENDPOINT",
+    "https://ai-giotesthub416362359489.openai.azure.com/",
+)
+AZURE_OPENAI_API_VERSION = os.environ.get("AZURE_OPENAI_API_VERSION", "2025-04-01-preview")
+_AZURE_TOKEN_PROVIDER = None  # lazily initialised
+
+def _get_azure_token_provider():
+    """Return a cached, auto-refreshing Entra ID token provider."""
+    global _AZURE_TOKEN_PROVIDER
+    if _AZURE_TOKEN_PROVIDER is None:
+        from azure.identity import DefaultAzureCredential, get_bearer_token_provider
+        _AZURE_TOKEN_PROVIDER = get_bearer_token_provider(
+            DefaultAzureCredential(),
+            "https://cognitiveservices.azure.com/.default",
+        )
+    return _AZURE_TOKEN_PROVIDER
+
+USE_AZURE = bool(AZURE_OPENAI_ENDPOINT)
 
 # Try to import Google's Generative AI SDK
 try:
@@ -150,6 +175,8 @@ except ImportError as e:
 # SUPPORTED MODELS CONFIGURATION
 # ==========================================
 SUPPORTED_MODELS = {
+    # Azure OpenAI deployment
+    "gpt-5.1-jan": {"provider": "openai", "temperature": 0.0, "max_tokens": 4096},
     # OpenAI Models
     "gpt-5.1": {"provider": "openai", "temperature": 0.0, "max_tokens": 4096},
     "gpt-4.1": {"provider": "openai", "temperature": 0.0, "max_tokens": 4096},
@@ -237,6 +264,24 @@ def is_gpt5_or_newer(model_id: str) -> bool:
     """Check if model is GPT-5.x or newer (uses max_completion_tokens)"""
     model_lower = model_id.lower()
     return any(x in model_lower for x in ['gpt-5', 'o3', 'o4'])
+
+def _build_openai_client(base_url: str = None, api_key: str = None) -> OpenAI:
+    """Build an OpenAI (or AzureOpenAI) client.
+
+    When *USE_AZURE* is True and no explicit *base_url* is given we
+    return an ``AzureOpenAI`` client authenticated via Entra ID.
+    """
+    if base_url:
+        # Local vLLM or Gemini-compat endpoint — keep plain OpenAI
+        return OpenAI(api_key=api_key if api_key else "EMPTY", base_url=base_url)
+    if USE_AZURE:
+        return AzureOpenAI(
+            azure_endpoint=AZURE_OPENAI_ENDPOINT,
+            api_version=AZURE_OPENAI_API_VERSION,
+            azure_ad_token_provider=_get_azure_token_provider(),
+        )
+    # Fallback: standard OpenAI
+    return OpenAI(api_key=os.environ.get("OPENAI_API_KEY"))
 
 def get_model_provider(model_id: str) -> str:
     """Determine the provider for a given model"""
@@ -624,12 +669,8 @@ class OpenAILM:
             if not gemini_api_key:
                 raise ValueError("GOOGLE_API_KEY or GEMINI_API_KEY required for Gemini")
             self.client = OpenAI(api_key=gemini_api_key, base_url=base_url)
-        elif base_url:
-            # Local model via vLLM
-            self.client = OpenAI(api_key=api_key if api_key else "EMPTY", base_url=base_url)
         else:
-            # Standard OpenAI API
-            self.client = OpenAI(api_key=os.environ.get("OPENAI_API_KEY"))
+            self.client = _build_openai_client(base_url=base_url, api_key=api_key)
     
     def set_sys_prompt(self, prompt: str):
         self.sys_prompt = prompt
@@ -1728,8 +1769,8 @@ def check_api_keys(victim_model: str, attacker_model: str) -> bool:
         if not os.environ.get("GOOGLE_API_KEY") and not os.environ.get("GEMINI_API_KEY"):
             missing.append("GOOGLE_API_KEY or GEMINI_API_KEY (for Gemini victim)")
     
-    if attacker_provider in ["openai"] and not os.environ.get("OPENAI_API_KEY"):
-        missing.append("OPENAI_API_KEY (for attacker/judge)")
+    if attacker_provider in ["openai"] and not USE_AZURE and not os.environ.get("OPENAI_API_KEY"):
+        missing.append("OPENAI_API_KEY (for attacker/judge) — or set AZURE_OPENAI_ENDPOINT for Azure")
     
     if missing:
         print(f"{RED}Missing API keys:{ENDC}")
