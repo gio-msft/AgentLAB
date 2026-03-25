@@ -73,7 +73,48 @@ from concurrent.futures import ThreadPoolExecutor
 import pandas as pd
 from tenacity import retry, stop_after_attempt, wait_fixed, retry_if_exception_type
 from openai import OpenAI, BadRequestError, APIConnectionError
+from openai import AzureOpenAI
 import json_repair
+
+# ---------------------------------------------------------------------------
+# Azure OpenAI + Entra ID configuration
+# Set AZURE_OPENAI_ENDPOINT to enable; falls back to standard OpenAI if unset.
+# ---------------------------------------------------------------------------
+AZURE_OPENAI_ENDPOINT = os.environ.get(
+    "AZURE_OPENAI_ENDPOINT",
+    "https://ai-giotesthub416362359489.openai.azure.com/",
+)
+AZURE_OPENAI_API_VERSION = os.environ.get("AZURE_OPENAI_API_VERSION", "2025-04-01-preview")
+_AZURE_TOKEN_PROVIDER = None  # lazily initialised
+
+def _get_azure_token_provider():
+    """Return a cached, auto-refreshing Entra ID token provider."""
+    global _AZURE_TOKEN_PROVIDER
+    if _AZURE_TOKEN_PROVIDER is None:
+        from azure.identity import DefaultAzureCredential, get_bearer_token_provider
+        _AZURE_TOKEN_PROVIDER = get_bearer_token_provider(
+            DefaultAzureCredential(),
+            "https://cognitiveservices.azure.com/.default",
+        )
+    return _AZURE_TOKEN_PROVIDER
+
+USE_AZURE = bool(AZURE_OPENAI_ENDPOINT)
+
+def _build_openai_client(base_url: str = None, api_key: str = None) -> OpenAI:
+    """Build an OpenAI (or AzureOpenAI) client.
+
+    When *USE_AZURE* is True and no explicit *base_url* is given we
+    return an ``AzureOpenAI`` client authenticated via Entra ID.
+    """
+    if base_url:
+        return OpenAI(api_key=api_key if api_key else "EMPTY", base_url=base_url)
+    if USE_AZURE:
+        return AzureOpenAI(
+            azure_endpoint=AZURE_OPENAI_ENDPOINT,
+            api_version=AZURE_OPENAI_API_VERSION,
+            azure_ad_token_provider=_get_azure_token_provider(),
+        )
+    return OpenAI(api_key=os.environ.get("OPENAI_API_KEY"))
 
 try:
     import tiktoken
@@ -396,10 +437,7 @@ class OpenAIAgent:
         self.model = config["model"]
         base_url = config.get("base_url")
         api_key = config.get("api_key") or os.environ.get(config.get("api_key_env", "OPENAI_API_KEY"), "EMPTY")
-        if base_url:
-            self.client = OpenAI(api_key=api_key, base_url=base_url)
-        else:
-            self.client = OpenAI(api_key=os.environ.get("OPENAI_API_KEY"))
+        self.client = _build_openai_client(base_url=base_url, api_key=api_key)
         self.is_local = bool(base_url and "localhost" in (base_url or ""))
         self.default_temp = config.get("temperature", 0)
 
@@ -443,10 +481,7 @@ class VictimModel:
             base_url = config.get("base_url")
             api_key = config.get("api_key") or os.environ.get(
                 config.get("api_key_env", "OPENAI_API_KEY"), "EMPTY")
-            if base_url:
-                self.oai_client = OpenAI(api_key=api_key, base_url=base_url)
-            else:
-                self.oai_client = OpenAI(api_key=os.environ.get("OPENAI_API_KEY"))
+            self.oai_client = _build_openai_client(base_url=base_url, api_key=api_key)
 
         elif self.provider == "anthropic":
             if not ANTHROPIC_AVAILABLE:
@@ -1170,9 +1205,9 @@ def run_for_victims(attacks: List[Dict], victim_map: Dict[str, Dict],
 # ==========================================
 def check_keys(victim_map: Dict[str, Dict]) -> List[str]:
     missing = []
-    # Planner / judge always need OpenAI
-    if not os.environ.get("OPENAI_API_KEY"):
-        missing.append("OPENAI_API_KEY (planner/judge)")
+    # Planner / judge always need OpenAI (or Azure)
+    if not os.environ.get("OPENAI_API_KEY") and not USE_AZURE:
+        missing.append("OPENAI_API_KEY (planner/judge) — or set AZURE_OPENAI_ENDPOINT for Azure")
     for vname, vcfg in victim_map.items():
         prov = vcfg.get("provider") or detect_provider(vcfg["model"])
         if prov == "anthropic" and not os.environ.get("ANTHROPIC_API_KEY"):

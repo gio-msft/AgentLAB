@@ -2,3 +2,4 @@ __pycache__/
 *.pyc
 *.pyo
 stac_unified_results/
+textgrad_cache.db/
