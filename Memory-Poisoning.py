@@ -76,6 +76,47 @@ from abc import ABC, abstractmethod
 
 from tenacity import retry, stop_after_attempt, wait_fixed, retry_if_exception_type
 from openai import OpenAI, BadRequestError, APIConnectionError
+from openai import AzureOpenAI
+
+# ---------------------------------------------------------------------------
+# Azure OpenAI + Entra ID configuration
+# Set AZURE_OPENAI_ENDPOINT to enable; falls back to standard OpenAI if unset.
+# ---------------------------------------------------------------------------
+AZURE_OPENAI_ENDPOINT = os.environ.get(
+    "AZURE_OPENAI_ENDPOINT",
+    "https://ai-giotesthub416362359489.openai.azure.com/",
+)
+AZURE_OPENAI_API_VERSION = os.environ.get("AZURE_OPENAI_API_VERSION", "2025-04-01-preview")
+_AZURE_TOKEN_PROVIDER = None  # lazily initialised
+
+def _get_azure_token_provider():
+    """Return a cached, auto-refreshing Entra ID token provider."""
+    global _AZURE_TOKEN_PROVIDER
+    if _AZURE_TOKEN_PROVIDER is None:
+        from azure.identity import DefaultAzureCredential, get_bearer_token_provider
+        _AZURE_TOKEN_PROVIDER = get_bearer_token_provider(
+            DefaultAzureCredential(),
+            "https://cognitiveservices.azure.com/.default",
+        )
+    return _AZURE_TOKEN_PROVIDER
+
+USE_AZURE = bool(AZURE_OPENAI_ENDPOINT)
+
+def _build_openai_client(base_url: str = None, api_key: str = None) -> OpenAI:
+    """Build an OpenAI (or AzureOpenAI) client.
+
+    When *USE_AZURE* is True and no explicit *base_url* is given we
+    return an ``AzureOpenAI`` client authenticated via Entra ID.
+    """
+    if base_url:
+        return OpenAI(api_key=api_key if api_key else "EMPTY", base_url=base_url)
+    if USE_AZURE:
+        return AzureOpenAI(
+            azure_endpoint=AZURE_OPENAI_ENDPOINT,
+            api_version=AZURE_OPENAI_API_VERSION,
+            azure_ad_token_provider=_get_azure_token_provider(),
+        )
+    return OpenAI(api_key=os.environ.get("OPENAI_API_KEY"))
 
 try:
     import anthropic as anthropic_sdk
@@ -129,8 +170,30 @@ def get_shared_mem0(api_key: str):
     with _mem0_lock:
         if not _mem0_initialized:
             try:
-                os.environ["OPENAI_API_KEY"] = api_key
-                _mem0_instance = Memory()
+                if USE_AZURE:
+                    from mem0.configs.base import MemoryConfig, EmbedderConfig, LlmConfig
+                    # Determine model for Mem0's LLM — use the planner deployment
+                    llm_model = os.environ.get("MEM0_LLM_MODEL", "gpt-5.1-jan")
+                    embed_model = os.environ.get("MEM0_EMBED_MODEL", "text-embedding-3-small")
+                    azure_cfg = {
+                        "azure_deployment": None,  # filled per-component below
+                        "azure_endpoint": AZURE_OPENAI_ENDPOINT,
+                        "api_version": AZURE_OPENAI_API_VERSION,
+                    }
+                    mem0_config = MemoryConfig(
+                        embedder=EmbedderConfig(provider="azure_openai", config={
+                            "model": embed_model,
+                            "azure_kwargs": {**azure_cfg, "azure_deployment": embed_model},
+                        }),
+                        llm=LlmConfig(provider="azure_openai", config={
+                            "model": llm_model,
+                            "azure_kwargs": {**azure_cfg, "azure_deployment": llm_model},
+                        }),
+                    )
+                    _mem0_instance = Memory(config=mem0_config)
+                else:
+                    os.environ["OPENAI_API_KEY"] = api_key
+                    _mem0_instance = Memory()
                 _mem0_initialized = True
             except Exception as e:
                 print(f"Mem0 init failed: {e}")
@@ -324,8 +387,8 @@ class OpenAIAgent(AgentBase):
         self.model = cfg["model"]
         self.is_local = cfg.get("is_local", False)
         key = cfg.get("api_key") or os.environ.get("OPENAI_API_KEY", "EMPTY")
-        url = cfg.get("base_url", "https://api.openai.com/v1")
-        self.client = OpenAI(api_key=key if key else "EMPTY", base_url=url)
+        url = cfg.get("base_url")
+        self.client = _build_openai_client(base_url=url, api_key=key)
         self.default_temp = cfg.get("temperature", 0)
 
     @retry(stop=stop_after_attempt(3), wait=wait_fixed(2), reraise=True)
@@ -1231,9 +1294,18 @@ EXAMPLES:
         local_model=args.local_model, local_url=args.local_url,
         num_strategies=args.num_strategies, verbose=args.verbose)
 
+    # When running on Azure, override planner/judge/attacker model names to match
+    # the deployment name and skip the OPENAI_API_KEY check.
+    if USE_AZURE:
+        deploy = os.environ.get("AZURE_OPENAI_LLM_DEPLOYMENT", "gpt-5.1-jan")
+        config.planner_model = deploy
+        config.judge_model = deploy
+        config.attacker_model = deploy
+        config.evasiveness_judge_model = deploy
+
     # Validate keys
-    if not config.openai_api_key:
-        print(f"{RED}OPENAI_API_KEY required (planner/judge){ENDC}"); return
+    if not config.openai_api_key and not USE_AZURE:
+        print(f"{RED}OPENAI_API_KEY required (planner/judge) — or set AZURE_OPENAI_ENDPOINT for Azure{ENDC}"); return
     if 'anthropic' in args.targets and not config.anthropic_api_key:
         print(f"{RED}ANTHROPIC_API_KEY required{ENDC}"); return
     if 'google' in args.targets and not config.google_api_key:

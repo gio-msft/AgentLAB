@@ -3,3 +3,4 @@ __pycache__/
 *.pyo
 stac_unified_results/
 textgrad_cache.db/
+agentlab_results_*
