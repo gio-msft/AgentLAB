@@ -68,8 +68,10 @@ def _get_local_model_id(port) -> str:
 
 
 def get_llm(provider: str, model: str, model_id: str | None, tool_delimiter: str) -> BasePipelineElement:
+    # Azure OpenAI requires api-version as a query parameter
+    _azure_query = {"api-version": os.getenv("AZURE_OPENAI_API_VERSION")} if os.getenv("AZURE_OPENAI_API_VERSION") else None
     if provider == "openai":
-        client = openai.OpenAI()
+        client = openai.OpenAI(default_query=_azure_query)
         llm = OpenAILLM(client, model)
     elif provider == "anthropic":
         client = anthropic.Anthropic()

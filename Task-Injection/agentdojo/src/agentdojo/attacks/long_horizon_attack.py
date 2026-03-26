@@ -189,7 +189,9 @@ DEFAULT_ATTACK_METHOD = "long_horizon"
 #             "args": call.args,
 #         })
 #     return res
-client = OpenAI()
+import os as _os
+_azure_query = {"api-version": _os.getenv("AZURE_OPENAI_API_VERSION")} if _os.getenv("AZURE_OPENAI_API_VERSION") else None
+client = OpenAI(default_query=_azure_query)
 
 class UserMessage(BaseModel):
     user: str = Field(..., description="The content of the user's message.")

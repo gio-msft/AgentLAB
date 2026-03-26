@@ -651,7 +651,8 @@ def batch_generate(
 
 def run_pipeline(args) -> list[PairResult]:
     """Main pipeline orchestrator with round-based loop."""
-    client = OpenAI()
+    _azure_query = {"api-version": os.getenv("AZURE_OPENAI_API_VERSION")} if os.getenv("AZURE_OPENAI_API_VERSION") else None
+    client = OpenAI(default_query=_azure_query)
     repo_root = _find_repo_root()
     suite = get_suite(args.benchmark_version, args.suite)
     

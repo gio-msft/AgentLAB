@@ -95,7 +95,9 @@ from agentdojo.task_suite.load_suites import get_suite
 from openai import OpenAI
 from pydantic import BaseModel, Field
 import json
-client = OpenAI()
+import os as _os
+_azure_query_rw = {"api-version": _os.getenv("AZURE_OPENAI_API_VERSION")} if _os.getenv("AZURE_OPENAI_API_VERSION") else None
+client = OpenAI(default_query=_azure_query_rw)
 
 class UserMessage(BaseModel):
     user: str = Field(..., description="The content of the user's message.")
