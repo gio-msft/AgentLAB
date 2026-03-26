@@ -24,10 +24,6 @@ RED='\033[0;31m'; GREEN='\033[0;32m'; YELLOW='\033[1;33m'; CYAN='\033[0;36m'; NC
 # Helpers
 # ---------------------------------------------------------------------------
 conda_env_exists() {
-    conda env list --json 2>/dev/null \
-        | python3 -c "import sys,json; envs=json.load(sys.stdin).get('envs',[]); sys.exit(0 if any(e.endswith('/$CONDA_ENV_NAME') or e.endswith('/$CONDA_ENV_NAME') for e in envs) else 1)" \
-        2>/dev/null
-    # More robust fallback
     conda env list 2>/dev/null | grep -qw "$CONDA_ENV_NAME"
 }
 
