@@ -4,3 +4,7 @@ __pycache__/
 stac_unified_results/
 textgrad_cache.db/
 agentlab_results_*
+Task-Injection/agentdojo/logs/
+Task-Injection/agentdojo/src/res/
+Task-Injection/agentdojo/src/runs/
+logs/

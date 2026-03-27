@@ -12,6 +12,8 @@ class ModelsEnum(StrEnum):
     """GPT-5.1"""
     GPT_5_1_JAN = "gpt-5.1-jan"
     """GPT-5.1 January (Azure deployment)"""
+    GPT_4O_AGENT_00 = "gpt-4o-agent-00"
+    """GPT-4o (Azure deployment gpt-4o-agent-00)"""
     GPT_4O = "gpt-4o"
     """GPT-4o"""
     GPT_4O_MINI_2024_07_18 = "gpt-4o-mini-2024-07-18"
@@ -82,6 +84,7 @@ MODEL_PROVIDERS = {
     ModelsEnum.GPT_4_TURBO_2024_04_09: "openai",
     ModelsEnum.GPT_5_1: "openai",
     ModelsEnum.GPT_5_1_JAN: "openai",
+    ModelsEnum.GPT_4O_AGENT_00: "openai",
     ModelsEnum.CLAUDE_3_OPUS_20240229: "anthropic",
     ModelsEnum.CLAUDE_3_SONNET_20240229: "anthropic",
     ModelsEnum.CLAUDE_3_5_SONNET_20240620: "anthropic",
@@ -114,6 +117,7 @@ MODEL_NAMES = {
     "gpt-5-mini": "GPT-5-Mini",
     "gpt-5.1": "GPT-5.1",
     "gpt-5.1-jan": "GPT-5.1",
+    "gpt-4o-agent-00": "GPT-4",
     "gpt-4o-mini-2024-07-18": "GPT-4",
     "gpt-3.5-turbo-0125": "GPT-3.5",
     "gpt-4-turbo-2024-04-09": "GPT-4",
