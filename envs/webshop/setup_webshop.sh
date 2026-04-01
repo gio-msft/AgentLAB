@@ -37,7 +37,7 @@ if [[ "${1:-}" == "--check" ]]; then
     fi
 
     # Verify critical imports inside the webshop env
-    if conda run --no-capture-output -n "$CONDA_ENV_NAME" python -c \
+    if PYTHONPATH="$SCRIPT_DIR" conda run --no-capture-output -n "$CONDA_ENV_NAME" python -c \
         "import gym; from web_agent_site.envs import WebAgentTextEnv; print('OK')" \
         2>/dev/null; then
         echo -e "${GREEN}✓ WebShop environment is functional.${NC}"
@@ -71,6 +71,10 @@ else
     echo -e "${RED}✗ Requirements file not found: $REQUIREMENTS${NC}"
     exit 1
 fi
+
+# Step 2b: Install API clients (pydantic conflict with spacy 3.3, force install)
+echo -e "${CYAN}Installing API clients (openai, anthropic, google-genai)...${NC}"
+conda run --no-capture-output -n "$CONDA_ENV_NAME" pip install --no-deps openai anthropic google-genai httpx anyio 2>/dev/null || true
 
 # Step 3: Install spacy model
 echo -e "${CYAN}Installing spacy en_core_web_sm model...${NC}"
