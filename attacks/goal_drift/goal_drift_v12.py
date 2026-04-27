@@ -727,7 +727,7 @@ class ExperimentRunner:
         try:
             client = self.agent.client
             r = client.chat.completions.create(model=self.config.victim_model,
-                messages=[{"role":"user","content":"Say 'OK'."}], max_tokens=10, timeout=30)
+                messages=[{"role":"user","content":"Say 'OK'."}], max_completion_tokens=10, timeout=30)
             print(f"{Colors.GREEN}✓ Victim connected: {self.config.victim_model}{Colors.ENDC}")
             return True
         except Exception as e:
